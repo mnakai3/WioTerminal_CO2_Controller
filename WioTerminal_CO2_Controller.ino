@@ -11,6 +11,8 @@ WiFiUDP    udp;
 const char* ssid = "<YOUR NETWORK SSID>";
 const char* password = "<YOUR NETWORK PASSWORD>";
 
+bool networkReady = false;
+
 #include <TFT_eSPI.h>
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite sprCO2 = TFT_eSprite(&tft);
@@ -24,6 +26,8 @@ TPLinkSmartPlug smartplug;
 
 #define POWER_ON_THRESHOLD (1000)
 #define POWER_OFF_THRESHOLD (800)
+
+constexpr float TEMP_OFFSET = 2.2f;
 
 void displayCO2(float val) {
   if (!isnan(val)) {
@@ -115,11 +119,6 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
   WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(100);
-  }
-  tft.fillRect(120, 220, 200, 20, TFT_BLACK);
-  tft.drawString(WiFi.localIP().toString().c_str(), 120, 220);
 
   sprCO2.createSprite(128, 42);
   sprTemperature.createSprite(45, 20);
@@ -135,14 +134,43 @@ void setup() {
   displaySwitch(false);
 }
 
+void networkCheck() {
+  static int elapsed = 0;
+
+  if (!networkReady && WiFi.isConnected()) {
+    tft.fillRect(120, 220, 200, 20, TFT_BLACK);
+    tft.drawString(WiFi.localIP().toString().c_str(), 120, 220);
+    networkReady = true;
+  }
+  if (networkReady && !WiFi.isConnected()) {
+    tft.fillRect(120, 220, 200, 20, TFT_BLACK);
+    tft.drawString("Connecting...", 120, 220);
+    networkReady = false;
+    elapsed = 0;
+  }
+  if (!networkReady) {
+    if (elapsed++ >= 10) {
+      WiFi.reconnect();
+      elapsed = 0;
+    }
+  }
+}
+
 void loop() {
   static float preCo2 = 0.0;
 
+  networkCheck();
+
   if (scd30.ReadyToRead()) {
     scd30.Read();
+    if (!isnan(scd30.Temperature)) {
+      scd30.Temperature -= TEMP_OFFSET;
+    }
     displayCO2(scd30.Co2Concentration);
     displayTemperature(scd30.Temperature);
     displayHumidity(scd30.Humidity);
+
+    if (!networkReady) return;
 
     if (!isnan(scd30.Co2Concentration)) {
       if (preCo2 < POWER_ON_THRESHOLD && POWER_ON_THRESHOLD <= scd30.Co2Concentration) {
